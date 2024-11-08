@@ -1,7 +1,7 @@
 import math
 from sqlalchemy import select, func, update, distinct, delete
 import config
-from db import session_execute, session_commit, get_db_session
+from db import session_execute, session_commit, get_db_session, session_refresh
 from models.buyItem import BuyItem
 from models.item import Item
 from models.subcategory import Subcategory
@@ -17,26 +17,17 @@ class ItemService:
             return item.scalar()
 
     @staticmethod
-    async def get_available_quantity(subcategory_id: int, category_id: int) -> int:
+    async def get_available_quantity(subcategory_id: int) -> int:
         async with get_db_session() as session:
             stmt = select(func.count(Item.id)).where(Item.subcategory_id == subcategory_id,
-                                                     Item.is_sold == 0, Item.category_id == category_id)
+                                                     Item.is_sold == 0)
             available_quantity = await session_execute(stmt, session)
             return available_quantity.scalar()
 
     @staticmethod
-    async def get_description(subcategory_id: int, category_id) -> str:
-        async with get_db_session() as session:
-            stmt = select(Item.description).where(Item.subcategory_id == subcategory_id,
-                                                  Item.category_id == category_id).limit(1)
-            description = await session_execute(stmt, session)
-            return description.scalar()
-
-    @staticmethod
-    async def get_bought_items(category_id: int, subcategory_id: int, quantity: int):
+    async def get_bought_items(subcategory_id: int, quantity: int):
         async with get_db_session() as session:
             stmt = select(Item).where(Item.subcategory_id == subcategory_id,
-                                      Item.category_id == category_id,
                                       Item.is_sold == 0).limit(quantity)
             result = await session_execute(stmt, session)
             bought_items = result.scalars().all()
@@ -67,7 +58,7 @@ class ItemService:
             list[Item]:
         async with get_db_session() as session:
             stmt = select(Item).join(Subcategory, Subcategory.id == Item.subcategory_id).where(
-                Item.category_id == category_id, Item.is_sold == 0).group_by(Subcategory.name).limit(
+                Subcategory.category_id == category_id, Item.is_sold == 0).group_by(Subcategory.name).limit(
                 config.PAGE_ENTRIES).offset(config.PAGE_ENTRIES * page)
             subcategories = await session_execute(stmt, session)
             return subcategories.scalars().all()
@@ -75,7 +66,8 @@ class ItemService:
     @staticmethod
     async def get_maximum_page(category_id: int):
         async with get_db_session() as session:
-            subquery = select(Item.subcategory_id).where(Item.category_id == category_id, Item.is_sold == 0)
+            subquery = select(Item.subcategory_id).join(Subcategory, Item.subcategory_id == Subcategory.id).where(
+                Subcategory.category_id == category_id, Item.is_sold == 0)
             stmt = select(func.count(distinct(subquery.c.subcategory_id)))
             maximum_page = await session_execute(stmt, session)
             maximum_page = maximum_page.scalar_one()
@@ -83,13 +75,6 @@ class ItemService:
                 return maximum_page / config.PAGE_ENTRIES - 1
             else:
                 return math.trunc(maximum_page / config.PAGE_ENTRIES)
-
-    @staticmethod
-    async def get_price_by_subcategory(subcategory_id: int, category_id: int) -> float:
-        async with get_db_session() as session:
-            stmt = select(Item.price).where(Item.subcategory_id == subcategory_id, Item.category_id == category_id)
-            price = await session_execute(stmt, session)
-            return price.scalar()
 
     @staticmethod
     async def set_items_not_new():
@@ -117,6 +102,14 @@ class ItemService:
         async with get_db_session() as session:
             session.add_all(new_items)
             await session_commit(session)
+
+    @staticmethod
+    async def add_single(item: Item) -> int:
+        async with get_db_session() as session:
+            session.add(item)
+            await session_commit(session)
+            await session_refresh(session, item)
+            return item.id
 
     @staticmethod
     async def get_new_items() -> list[Item]:

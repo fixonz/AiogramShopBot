@@ -22,16 +22,12 @@ class UserService:
     async def create(telegram_id: int, telegram_username: str):
         async with get_db_session() as session:
             crypto_addr_gen = CryptoAddressGenerator()
-            crypto_addresses = crypto_addr_gen.get_addresses(i=0)
+            ltc_addr = crypto_addr_gen.get_addresses()['ltc']
             new_user = User(
                 telegram_username=telegram_username,
                 telegram_id=telegram_id,
-                btc_address=crypto_addresses['btc'],
-                ltc_address=crypto_addresses['ltc'],
-                trx_address=crypto_addresses['trx'],
-                eth_address=crypto_addresses['eth'],
-                sol_address=crypto_addresses['sol'],
-                seed=crypto_addr_gen.mnemonic_str
+                seed=crypto_addr_gen.mnemonic_str,
+                ltc_address=ltc_addr
             )
             session.add(new_user)
             await session_commit(session)
@@ -73,61 +69,6 @@ class UserService:
                 last_balance_refresh=time)
             await session_execute(stmt, session)
             await session_commit(session)
-
-    @staticmethod
-    async def get_balances(telegram_id: int) -> dict:
-        async with get_db_session() as session:
-            stmt = select(User).where(User.telegram_id == telegram_id)
-            user_balances = await session_execute(stmt, session)
-            user_balances = user_balances.scalar()
-            user_balances = [user_balances.btc_balance, user_balances.ltc_balance,
-                             user_balances.usdt_trc20_balance, user_balances.usdd_trc20_balance,
-                             user_balances.usdt_erc20_balance, user_balances.usdc_erc20_balance]
-            keys = ["btc_balance", "ltc_balance", "trc_20_usdt_balance", "trc_20_usdd_balance", "erc_20_usdt_balance",
-                    "erc_20_usdc_balance"]
-            user_balances = dict(zip(keys, user_balances))
-            return user_balances
-
-    @staticmethod
-    async def get_addresses(telegram_id: int) -> dict:
-        async with get_db_session() as session:
-            stmt = select(User).where(User.telegram_id == telegram_id)
-            user_addresses = await session_execute(stmt, session)
-            user_addresses = user_addresses.scalar()
-            user_addresses = [user_addresses.btc_address, user_addresses.ltc_address,
-                              user_addresses.trx_address, user_addresses.eth_address,
-                              user_addresses.sol_address]
-            keys = ["btc_address", "ltc_address", "trx_address", "eth_address", "sol_address"]
-            user_addresses = dict(zip(keys, user_addresses))
-            return user_addresses
-
-    @staticmethod
-    async def update_crypto_balances(telegram_id: int, new_crypto_balances: dict):
-        async with get_db_session() as session:
-            stmt = select(User).where(User.telegram_id == telegram_id)
-            result = await session_execute(stmt, session)
-            user = result.scalar()
-            balance_fields_map = {
-                "btc_deposit": "btc_balance",
-                "ltc_deposit": "ltc_balance",
-                "sol_deposit": "sol_balance",
-                "usdt_trc20_deposit": "usdt_trc20_balance",
-                "usdd_trc20_deposit": "usdd_trc20_balance",
-                "usdd_erc20_deposit": "usdd_erc20_balance",
-                "usdc_erc20_deposit": "usdc_erc20_balance",
-            }
-            update_values = {}
-
-            for key, value in new_crypto_balances.items():
-                if key in balance_fields_map:
-                    field_name = balance_fields_map[key]
-                    current_balance = getattr(user, field_name)
-                    update_values[field_name] = current_balance + value
-
-            if update_values:
-                stmt = update(User).where(User.telegram_id == telegram_id).values(**update_values)
-                await session_execute(stmt, session)
-                await session_commit(session)
 
     @staticmethod
     async def update_top_up_amount(telegram_id: int, deposit_amount: float):
@@ -245,9 +186,33 @@ class UserService:
             await UserService.update_top_up_amount(user.telegram_id, float(balance_value))
             return Localizator.get_text(BotEntity.ADMIN, "credit_management_added_success").format(
                 amount=balance_value,
-                telegram_id=user.telegram_id)
+                telegram_id=user.telegram_id,
+                currency_text=Localizator.get_currency_text())
         elif operation == "minus":
             await UserService.update_consume_records(user.telegram_id, float(balance_value))
             return Localizator.get_text(BotEntity.ADMIN, "credit_management_reduced_success").format(
                 amount=balance_value,
-                telegram_id=user.telegram_id)
+                telegram_id=user.telegram_id,
+                currency_text=Localizator.get_currency_text())
+
+    @staticmethod
+    async def update_crypto_balances(telegram_id: int, new_crypto_balances: dict):
+        async with get_db_session() as session:
+            get_old_values_stmt = select(User).where(User.telegram_id == telegram_id)
+            result = await session.execute(get_old_values_stmt)
+            user = result.scalar()
+            balance_fields_map = {
+                "ltc_deposit": "ltc_balance",
+            }
+            update_values = {}
+
+            for key, value in new_crypto_balances.items():
+                if key in balance_fields_map:
+                    field_name = balance_fields_map[key]
+                    current_balance = getattr(user, field_name)
+                    update_values[field_name] = current_balance + value
+
+            if update_values:
+                stmt = update(User).where(User.telegram_id == telegram_id).values(**update_values)
+                await session_execute(stmt, session)
+                await session_commit(session)

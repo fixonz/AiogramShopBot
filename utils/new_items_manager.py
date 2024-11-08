@@ -68,7 +68,7 @@ class NewItemsManager:
     async def create_text_of_items_msg(items: List[Item], is_update: bool) -> str:
         filtered_items = {}
         for item in items:
-            category = await CategoryService.get_by_primary_key(item.category_id)
+            category = await CategoryService.get_by_subcategory_id(item.subcategory_id)
             if category.name not in filtered_items:
                 filtered_items[category.name] = {}
             if item.subcategory not in filtered_items[category.name]:
@@ -86,6 +86,7 @@ class NewItemsManager:
                 message += Localizator.get_text(BotEntity.USER, "subcategory_button").format(
                     subcategory_name=subcategory.name,
                     available_quantity=len(item),
-                    subcategory_price=item[0].price) + "\n"
+                    subcategory_price=subcategory.price,
+                    currency_sym=Localizator.get_currency_symbol()) + "\n"
         message += "</b>"
         return message

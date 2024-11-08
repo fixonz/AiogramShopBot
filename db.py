@@ -25,6 +25,7 @@ from models.buyItem import BuyItem
 from models.category import Category
 from models.subcategory import Subcategory
 from models.deposit import Deposit
+from models.photo import Photo
 
 url = ""
 engine = None

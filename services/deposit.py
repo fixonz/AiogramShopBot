@@ -8,12 +8,11 @@ from models.deposit import Deposit
 class DepositService:
 
     @staticmethod
-    async def create(tx_id, user_id, network, token_name, amount, vout=None):
+    async def create(tx_id, user_id, network, amount, vout=None):
         async with get_db_session() as session:
             dep = Deposit(user_id=user_id,
                           tx_id=tx_id,
                           network=network,
-                          token_name=token_name,
                           amount=amount,
                           vout=vout)
             session.add(dep)
@@ -38,3 +37,11 @@ class DepositService:
             stmt = select(Deposit).where(Deposit.deposit_datetime >= time_to_subtract)
             deposits = await session_execute(stmt, session)
             return deposits.scalars().all()
+
+    @staticmethod
+    async def get_by_id(deposit_id: int) -> Deposit:
+        async with get_db_session() as session:
+            stmt = select(Deposit).where(Deposit.id == deposit_id)
+            deposit = await session_execute(stmt, session)
+            return deposit.scalar()
+

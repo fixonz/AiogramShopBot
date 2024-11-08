@@ -17,7 +17,8 @@ class NotificationManager:
         message = Localizator.get_text(BotEntity.USER, "refund_notification").format(
             total_price=refund_data.total_price,
             quantity=refund_data.quantity,
-            subcategory=refund_data.subcategory)
+            subcategory=refund_data.subcategory,
+            currency_sym=Localizator.get_currency_symbol())
         try:
             await bot.send_message(refund_data.telegram_id, f"<b>{message}</b>")
         except Exception as e:
@@ -46,27 +47,26 @@ class NotificationManager:
             key.replace('_deposit', "").replace('_', ' ').upper(): value
             for key, value in new_crypto_balances.items()
         }
+
         user = await UserService.get_by_tgid(telegram_id)
         user_button = await NotificationManager.make_user_button(user.telegram_username)
         address_map = {
-            "TRC": user.trx_address,
-            "ERC": user.eth_address,
-            "BTC": user.btc_address,
-            "LTC": user.ltc_address,
-            "SOL": user.sol_address
+            "LTC": user.ltc_address
         }
         crypto_key = list(merged_crypto_balances.keys())[0]
         addr = next((address_map[key] for key in address_map if key in crypto_key), "")
         if user.telegram_username:
-            message = Localizator.get_text(BotEntity.ADMIN, "notification_new_deposit_username").format(
-                username=user.telegram_username,
-                deposit_amount_usd=deposit_amount_usd
-            )
+            user_identifier = user.telegram_username
+            message_template = "notification_new_deposit_username"
         else:
-            message = Localizator.get_text(BotEntity.ADMIN, "notification_new_deposit_id").format(
-                telegram_id=telegram_id,
-                deposit_amount_usd=deposit_amount_usd
-            )
+            user_identifier = telegram_id
+            message_template = "notification_new_deposit_id"
+
+        message = Localizator.get_text(BotEntity.ADMIN, message_template).format(
+            username=user_identifier,
+            deposit_amount_fiat=deposit_amount_usd,
+            currency_sym=Localizator.get_currency_symbol()
+        )
         for crypto_name, value in merged_crypto_balances.items():
             if value > 0:
                 message += Localizator.get_text(BotEntity.ADMIN, "notification_crypto_deposit").format(
@@ -91,12 +91,14 @@ class NotificationManager:
                 total_price=total_price,
                 quantity=quantity,
                 subcategory_name=subcategory.name,
-                category_name=category.name)
+                category_name=category.name,
+                currency_sym=Localizator.get_currency_symbol())
         else:
             message += Localizator.get_text(BotEntity.ADMIN, "notification_purchase_with_username").format(
                 telegram_id=telegram_id,
                 total_price=total_price,
                 quantity=quantity,
                 subcategory_name=subcategory.name,
-                category_name=category.name)
+                category_name=category.name,
+                currency_sym=Localizator.get_currency_symbol())
         await NotificationManager.send_to_admins(message, user_button, bot)

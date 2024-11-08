@@ -2,7 +2,6 @@ import asyncio
 import inspect
 import logging
 from typing import Union
-
 from aiogram import types, Router, F
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import StateFilter
@@ -19,6 +18,7 @@ from services.buy import BuyService
 from services.category import CategoryService
 from services.deposit import DepositService
 from services.item import ItemService
+from services.photo import PhotoService
 from services.subcategory import SubcategoryService
 from services.user import UserService
 from utils.custom_filters import AdminIdFilter
@@ -51,7 +51,7 @@ class AdminConstants:
                                                callback_data=create_admin_callback(level=-1, action="cancel"))
     confirmation_builder.add(cancel_button, confirmation_button)
     back_to_main_button = types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
-                                                                                        "back_to_menu"),
+                                                                               "back_to_menu"),
                                                      callback_data=create_admin_callback(level=0))
 
     @staticmethod
@@ -62,11 +62,12 @@ class AdminConstants:
 
 
 @admin_router.message(F.text == Localizator.get_text(BotEntity.ADMIN, "menu"), AdminIdFilter())
-async def admin_command_handler(message: types.message):
-    await admin(message)
+async def admin_command_handler(message: types.message, state: FSMContext):
+    await admin(message, state)
 
 
-async def admin(message: Union[Message, CallbackQuery]):
+async def admin(message: Union[Message, CallbackQuery], state: FSMContext):
+    await state.clear()
     admin_menu_builder = InlineKeyboardBuilder()
     admin_menu_builder.button(text=Localizator.get_text(BotEntity.ADMIN, "announcements"),
                               callback_data=create_admin_callback(level=1))
@@ -90,17 +91,15 @@ async def admin(message: Union[Message, CallbackQuery]):
 
 class AdminStates(StatesGroup):
     message_to_send = State()
-    new_items_file = State()
-    btc_withdraw = State()
-    ltc_withdraw = State()
-    sol_withdraw = State()
-    subcategory = State()
-    category = State()
-    price = State()
-    description = State()
-    private_data = State()
+    category_picture = State()
+    subcategory_picture = State()
+    category_description = State()
+    subcategory_price = State()
+    item_private_data = State()
     user_entity = State()
     balance_value = State()
+    add_entity = State()
+    edit_entity = State()
 
 
 async def announcements(callback: CallbackQuery):
@@ -153,7 +152,7 @@ async def confirm_and_send(callback: CallbackQuery):
     confirmed = AdminCallback.unpack(callback.data).action == "confirm"
     is_caption = callback.message.caption
     new_items_header = HTMLTagsRemover.remove_html_tags(Localizator.get_text(BotEntity.ADMIN,
-                                                                                      "restocking_message_header"))
+                                                                             "restocking_message_header"))
     is_restocking = callback.message.text and new_items_header in callback.message.text
     if confirmed:
         await callback.message.edit_reply_markup()
@@ -194,125 +193,88 @@ async def decline_action(callback: CallbackQuery):
 
 async def inventory_management(callback: CallbackQuery):
     cb_builder = InlineKeyboardBuilder()
-    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
-                                                                                 "add_items"),
-                                              callback_data=create_admin_callback(level=6)))
-    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
-                                                                                 "delete_category"),
-                                              callback_data=create_admin_callback(level=8)))
-    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
-                                                                                 "delete_subcategory"),
-                                              callback_data=create_admin_callback(level=9)))
+    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "add_item"),
+                                              callback_data=create_admin_callback(level=7, action="init_picker")))
+    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "add_category"),
+                                              callback_data=create_admin_callback(level=24, action="category")),
+                   types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
+                                                                        "delete_category"),
+                                              callback_data=create_admin_callback(level=8, args_to_action="category"))
+                   )
+    cb_builder.row(types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN, "add_subcategory"),
+                                              callback_data=create_admin_callback(level=24,
+                                                                                  action="subcategory")),
+                   types.InlineKeyboardButton(text=Localizator.get_text(BotEntity.ADMIN,
+                                                                        "delete_subcategory"),
+                                              callback_data=create_admin_callback(level=8, args_to_action="subcategory")
+                                              ))
     cb_builder.row(AdminConstants.back_to_main_button)
     await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "inventory_management"),
                                      reply_markup=cb_builder.as_markup())
 
 
-async def add_items(callback: CallbackQuery):
-    keyboard_builder = InlineKeyboardBuilder()
-    keyboard_builder.button(text=Localizator.get_text(BotEntity.ADMIN, "add_items_json"),
-                            callback_data=create_admin_callback(level=7, args_to_action="JSON"))
-    keyboard_builder.button(text=Localizator.get_text(BotEntity.ADMIN, "add_items_txt"),
-                            callback_data=create_admin_callback(level=7, args_to_action="TXT"))
-    keyboard_builder.button(text=Localizator.get_text(BotEntity.ADMIN, "add_items_menu"),
-                            callback_data=create_admin_callback(level=7, args_to_action="MENU"))
-    keyboard_builder.adjust(2)
-    keyboard_builder.row(AdminConstants.back_to_main_button)
-    await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "add_items_msg"),
-                                     reply_markup=keyboard_builder.as_markup())
-
-
-@admin_router.message(AdminIdFilter(), F.document | F.text, StateFilter(AdminStates.new_items_file))
-async def receive_new_items_file(message: types.message, state: FSMContext):
-    if message.document:
-        await state.clear()
-        file_name = message.document.file_name
-        file_id = message.document.file_id
-        file = await message.bot.get_file(file_id)
-        await message.bot.download_file(file.file_path, file_name)
-        adding_result = await NewItemsManager.add(file_name)
-        if isinstance(adding_result, BaseException):
-            await message.answer(
-                text=Localizator.get_text(BotEntity.ADMIN, "add_items_err").format(
-                    adding_result=adding_result))
-            await state.clear()
-        elif type(adding_result) is int:
-            await message.answer(
-                text=Localizator.get_text(BotEntity.ADMIN, "add_items_success").format(
-                    adding_result=adding_result))
-            await state.clear()
-    elif message.text.lower() == "cancel":
-        await state.clear()
-        await message.answer(Localizator.get_text(BotEntity.COMMON, "cancelled"))
+async def hide_entity(callback: CallbackQuery):
+    unpacked_callback = AdminCallback.unpack(callback.data)
+    entity = unpacked_callback.args_to_action
+    if entity == "category":
+        delete_category_builder = await create_entity_buttons(
+            CategoryService.get_to_hide(unpacked_callback.page), entity, 10)
+        delete_category_builder = await add_pagination_buttons(delete_category_builder, callback.data,
+                                                               CategoryService.get_maximum_page_to_delete(),
+                                                               AdminCallback.unpack,
+                                                               AdminConstants.back_to_main_button)
+        await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "delete_category"),
+                                         reply_markup=delete_category_builder.as_markup())
     else:
-        await message.answer(text=Localizator.get_text(BotEntity.ADMIN, "add_items_msg"))
+        delete_subcategory_builder = await create_entity_buttons(
+            SubcategoryService.get_to_delete(unpacked_callback.page),
+            entity, 10)
+        delete_subcategory_builder = await add_pagination_buttons(delete_subcategory_builder, callback.data,
+                                                                  SubcategoryService.get_maximum_page_to_delete(),
+                                                                  AdminCallback.unpack,
+                                                                  AdminConstants.back_to_main_button)
+        await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "delete_subcategory"),
+                                         reply_markup=delete_subcategory_builder.as_markup())
 
 
-async def delete_category(callback: CallbackQuery):
-    unpacked_callback = AdminCallback.unpack(callback.data)
-    delete_category_builder = await create_delete_entity_buttons(
-        CategoryService.get_to_delete(unpacked_callback.page), "category")
-    delete_category_builder = await add_pagination_buttons(delete_category_builder, callback.data,
-                                                           CategoryService.get_maximum_page(),
-                                                           AdminCallback.unpack,
-                                                           AdminConstants.back_to_main_button)
-    await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "delete_category"),
-                                     reply_markup=delete_category_builder.as_markup())
-
-
-async def create_delete_entity_buttons(get_all_entities_function,
-                                       entity_name):
+async def create_entity_buttons(get_all_entities_function, entity_name, level):
+    # hide - 10, pick - 7, edit-26
     entities = await get_all_entities_function
-    delete_entity_builder = InlineKeyboardBuilder()
+    cb_builder = InlineKeyboardBuilder()
     for entity in entities:
-        delete_entity_builder.button(text=entity.name,
-                                     callback_data=create_admin_callback(level=10,
-                                                                         action=f"delete_{entity_name}",
-                                                                         args_to_action=entity.id))
-    delete_entity_builder.adjust(1)
-    return delete_entity_builder
-
-
-async def delete_subcategory(callback: CallbackQuery):
-    unpacked_callback = AdminCallback.unpack(callback.data)
-    delete_subcategory_builder = await create_delete_entity_buttons(
-        SubcategoryService.get_to_delete(unpacked_callback.page),
-        "subcategory")
-    delete_subcategory_builder = await add_pagination_buttons(delete_subcategory_builder, callback.data,
-                                                              SubcategoryService.get_maximum_page_to_delete(),
-                                                              AdminCallback.unpack,
-                                                              AdminConstants.back_to_main_button)
-    await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "delete_subcategory"),
-                                     reply_markup=delete_subcategory_builder.as_markup())
+        cb_builder.row(types.InlineKeyboardButton(text=entity.name,
+                                                  callback_data=create_admin_callback(level=level,
+                                                                                      action=entity_name,
+                                                                                      args_to_action=entity.id)))
+    return cb_builder
 
 
 async def delete_confirmation(callback: CallbackQuery):
     unpacked_callback = AdminCallback.unpack(callback.data)
-    action = unpacked_callback.action
+    entity = unpacked_callback.action
     args_to_action = unpacked_callback.args_to_action
     delete_markup = InlineKeyboardBuilder()
     delete_markup.button(
         text=Localizator.get_text(BotEntity.COMMON, "confirm"),
         callback_data=create_admin_callback(level=11,
-                                            action=f"confirmed_{action}",
+                                            action=entity,
                                             args_to_action=args_to_action)
     )
     delete_markup.add(AdminConstants.cancel_button)
-    entity_to_delete = action.split('_')[-1]
-    if entity_to_delete == "category":
+    if entity == "category":
         category_id = args_to_action
         category = await CategoryService.get_by_primary_key(category_id)
         await callback.message.edit_text(
             text=Localizator.get_text(BotEntity.ADMIN, "delete_entity_confirmation").format(
-                entity=entity_to_delete,
+                entity=entity,
                 entity_name=category.name),
             reply_markup=delete_markup.as_markup())
-    elif entity_to_delete == "subcategory":
+    else:
         subcategory_id = args_to_action
         subcategory = await SubcategoryService.get_by_primary_key(subcategory_id)
         await callback.message.edit_text(
             text=Localizator.get_text(BotEntity.ADMIN, "delete_entity_confirmation").format(
-                entity=entity_to_delete,
+                entity=entity,
                 entity_name=subcategory.name),
             reply_markup=delete_markup.as_markup())
 
@@ -320,7 +282,7 @@ async def delete_confirmation(callback: CallbackQuery):
 async def confirm_and_delete(callback: CallbackQuery):
     unpacked_callback = AdminCallback.unpack(callback.data)
     args_to_action = unpacked_callback.args_to_action
-    entity_to_delete = unpacked_callback.action.split('_')[-1]
+    entity_to_delete = unpacked_callback.action
     back_to_main_builder = InlineKeyboardBuilder()
     back_to_main_builder.add(AdminConstants.back_to_main_button)
     if entity_to_delete == "category":
@@ -329,15 +291,14 @@ async def confirm_and_delete(callback: CallbackQuery):
         message_text = Localizator.get_text(BotEntity.ADMIN, "successfully_deleted").format(
             entity_name=category.name,
             entity_to_delete=entity_to_delete)
-        await ItemService.delete_unsold_with_category_id(args_to_action)
+        await CategoryService.set_hidden(args_to_action)
         await callback.message.edit_text(text=message_text, reply_markup=back_to_main_builder.as_markup())
-    elif entity_to_delete == "subcategory":
+    else:
         subcategory = await SubcategoryService.get_by_primary_key(args_to_action)
         message_text = Localizator.get_text(BotEntity.ADMIN, "successfully_deleted").format(
             entity_name=subcategory.name,
             entity_to_delete=entity_to_delete)
-        await ItemService.delete_with_subcategory_id(args_to_action)
-        await SubcategoryService.delete_if_not_used(args_to_action)
+        await SubcategoryService.set_hidden(args_to_action)
         await callback.message.edit_text(text=message_text, reply_markup=back_to_main_builder.as_markup())
 
 
@@ -385,9 +346,12 @@ async def balance_management(message: types.message, state: FSMContext):
         operation = await state.get_data()
         operation = operation['operation']
         if operation == 'plus':
-            await message.answer(Localizator.get_text(BotEntity.ADMIN, "credit_management_plus_operation"))
+            await message.answer(Localizator.get_text(BotEntity.ADMIN, "credit_management_plus_operation").format(
+                currency_text=Localizator.get_currency_text()))
         elif operation == 'minus':
-            await message.answer(Localizator.get_text(BotEntity.ADMIN, "credit_management_minus_operation"))
+            await message.answer(Localizator.get_text(BotEntity.ADMIN, "credit_management_minus_operation").format(
+                currency_text=Localizator.get_currency_text()
+            ))
     elif current_state == AdminStates.balance_value:
         await state.update_data(balance_value=message.text)
         state_data = await state.get_data()
@@ -406,7 +370,8 @@ async def make_refund_markup(page):
                 text=Localizator.get_text(BotEntity.ADMIN, "refund_by_username").format(
                     telegram_username=buy.telegram_username,
                     total_price=buy.total_price,
-                    subcategory=buy.subcategory),
+                    subcategory=buy.subcategory,
+                    currency_sym=Localizator.get_currency_symbol()),
                 callback_data=create_admin_callback(level=16,
                                                     action="make_refund",
                                                     args_to_action=buy.buy_id))
@@ -415,7 +380,8 @@ async def make_refund_markup(page):
                 text=Localizator.get_text(BotEntity.ADMIN, "refund_by_tgid").format(
                     telegram_id=buy.telegram_id,
                     total_price=buy.total_price,
-                    subcategory=buy.subcategory),
+                    subcategory=buy.subcategory,
+                    currency_sym=Localizator.get_currency_symbol()),
                 callback_data=create_admin_callback(level=16,
                                                     action="make_refund",
                                                     args_to_action=buy.buy_id))
@@ -453,7 +419,8 @@ async def refund_confirmation(callback: CallbackQuery):
                 telegram_username=refund_data.telegram_username,
                 quantity=refund_data.quantity,
                 subcategory=refund_data.subcategory,
-                total_price=refund_data.total_price),
+                total_price=refund_data.total_price,
+                currency_sym=Localizator.get_currency_symbol()),
             reply_markup=confirmation_builder.as_markup())
     else:
         await callback.message.edit_text(
@@ -461,7 +428,8 @@ async def refund_confirmation(callback: CallbackQuery):
                 telegram_id=refund_data.telegram_id,
                 quantity=refund_data.quantity,
                 subcategory=refund_data.subcategory,
-                total_price=refund_data.total_price), reply_markup=confirmation_builder.as_markup())
+                total_price=refund_data.total_price,
+                currency_sym=Localizator.get_currency_symbol()), reply_markup=confirmation_builder.as_markup())
 
 
 async def pick_statistics_entity(callback: CallbackQuery):
@@ -540,7 +508,8 @@ async def get_statistics(callback: CallbackQuery):
             text=Localizator.get_text(BotEntity.ADMIN, "sales_statistics").format(
                 timedelta=unpacked_callback.args_to_action,
                 total_profit=total_profit, items_sold=items_sold,
-                buys_count=len(buys)),
+                buys_count=len(buys),
+                currency_sym=Localizator.get_currency_symbol()),
             reply_markup=statistics_keyboard_builder.as_markup())
     elif unpacked_callback.action == "deposits":
         back_button = await AdminConstants.get_back_button(unpacked_callback)
@@ -548,47 +517,18 @@ async def get_statistics(callback: CallbackQuery):
                    AdminConstants.back_to_main_button]
         statistics_keyboard_builder.add(*buttons)
         deposits = await DepositService.get_by_timedelta(unpacked_callback.args_to_action)
-        btc_amount = 0.0
         ltc_amount = 0.0
-        sol_amount = 0.0
-        usd_amount = 0.0
-        usdd_trc20_amount = 0.0
-        usdt_trc20_amount = 0.0
-        usdt_erc20_amount = 0.0
-        usdc_erc20_amount = 0.0
+        fiat_amount = 0.0
         for deposit in deposits:
-            if deposit.network == "BTC":
-                btc_amount += deposit.amount / pow(10, 8)
-            elif deposit.network == "LTC":
+            if deposit.network == "LTC":
                 ltc_amount += deposit.amount / pow(10, 8)
-            elif deposit.network == "SOL":
-                sol_amount += deposit.amount / pow(10, 9)
-            elif deposit.token_name == "USDD_TRC20":
-                divided_deposit = deposit.amount / pow(10, 18)
-                usd_amount += divided_deposit
-                usdd_trc20_amount += divided_deposit
-            elif deposit.token_name == "USDT_TRC20":
-                divided_amount = deposit.amount / pow(10, 6)
-                usd_amount += divided_amount
-                usdt_trc20_amount += divided_amount
-            elif deposit.token_name == "USDT_ERC20":
-                divided_amount = deposit.amount / pow(10, 6)
-                usd_amount += divided_amount
-                usdt_erc20_amount += divided_amount
-            elif deposit.token_name == "USDC_ERC20":
-                divided_amount = deposit.amount / pow(10, 6)
-                usd_amount += divided_amount
-                usdc_erc20_amount += divided_amount
         crypto_prices = await CryptoApiManager.get_crypto_prices()
-        usd_amount += (btc_amount * crypto_prices['btc']) + (ltc_amount * crypto_prices['ltc']) + (
-                sol_amount * crypto_prices['sol'])
+        fiat_amount += (ltc_amount * crypto_prices['ltc'])
         await callback.message.edit_text(
             text=Localizator.get_text(BotEntity.ADMIN, "deposits_statistics_msg").format(
-                timedelta=unpacked_callback.args_to_action, deposits_count=len(deposits),
-                btc_amount=btc_amount, ltc_amount=ltc_amount,
-                sol_amount=sol_amount, usdt_trc20_amount=usdt_trc20_amount,
-                usdt_erc20_amount=usdt_erc20_amount, usdd_trc20_amount=usdd_trc20_amount,
-                usdc_erc20_amount=usdc_erc20_amount, usd_amount="{:.2f}".format(usd_amount)),
+                timedelta=unpacked_callback.args_to_action, deposits_count=len(deposits), ltc_amount=ltc_amount,
+                fiat_amount="{:.2f}".format(fiat_amount),
+                currency_text=Localizator.get_currency_text()),
             reply_markup=statistics_keyboard_builder.as_markup())
 
 
@@ -607,14 +547,16 @@ async def make_refund(callback: CallbackQuery):
                     total_price=refund_data.total_price,
                     telegram_username=refund_data.telegram_username,
                     quantity=refund_data.quantity,
-                    subcategory=refund_data.subcategory))
+                    subcategory=refund_data.subcategory,
+                    currency_sym=Localizator.get_currency_symbol()))
         else:
             await callback.message.edit_text(
                 text=Localizator.get_text(BotEntity.ADMIN, "successfully_refunded_with_tgid").format(
                     total_price=refund_data.total_price,
                     telegram_id=refund_data.telegram_id,
                     quantity=refund_data.quantity,
-                    subcategory=refund_data.subcategory))
+                    subcategory=refund_data.subcategory,
+                    currency_sym=Localizator.get_currency_symbol()))
 
 
 async def send_db_file(callback: CallbackQuery):
@@ -643,70 +585,137 @@ async def send_withdraw_crypto_menu(callback: CallbackQuery):
 
 async def add_items_menu(callback: CallbackQuery, state: FSMContext):
     unpacked_cb = AdminCallback.unpack(callback.data)
-    method = unpacked_cb.args_to_action
-    if method == "JSON":
-        await callback.message.edit_text(Localizator.get_text(BotEntity.ADMIN, "add_items_json_msg"))
-        await state.set_state(AdminStates.new_items_file)
-    elif method == "TXT":
-        await callback.message.edit_text(Localizator.get_text(BotEntity.ADMIN, "add_items_txt_msg"))
-        await state.set_state(AdminStates.new_items_file)
-    elif method == "MENU":
+    if unpacked_cb.action == "init_picker":
+        pick_category_builder = await create_entity_buttons(CategoryService.get_all(unpacked_cb.page),
+                                                            "category",
+                                                            7)
+        pick_category_builder = await add_pagination_buttons(pick_category_builder, callback.data,
+                                                             CategoryService.get_maximum_page(),
+                                                             AdminCallback.unpack,
+                                                             AdminConstants.back_to_main_button)
+        await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, 'pick_category'),
+                                         reply_markup=pick_category_builder.as_markup())
+    elif unpacked_cb.action == "category":
+        category_id = unpacked_cb.args_to_action
+        await state.update_data(category_id=category_id)
+        pick_subcategory_builder = await create_entity_buttons(SubcategoryService.get_by_category_id(unpacked_cb.page,
+                                                                                                     category_id),
+                                                               "subcategory",
+                                                               7)
+        pick_subcategory_builder = await add_pagination_buttons(pick_subcategory_builder, callback.data,
+                                                                SubcategoryService.get_maximum_page(),
+                                                                AdminCallback.unpack,
+                                                                AdminConstants.back_to_main_button)
+        await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "pick_subcategory"),
+                                         reply_markup=pick_subcategory_builder.as_markup())
+    elif unpacked_cb.action == "subcategory":
+        await state.update_data(subcategory_id=unpacked_cb.args_to_action)
+        await state.set_state(AdminStates.item_private_data)
+        await callback.message.edit_text(text=Localizator.get_text(BotEntity.ADMIN, "add_items_caption"))
+
+
+async def add_entity(callback: CallbackQuery, state: FSMContext):
+    unpacked_cb = AdminCallback.unpack(callback.data)
+    entity = unpacked_cb.action
+    category_id = unpacked_cb.args_to_action
+    await state.update_data(entity=entity)
+    if entity == "category" and category_id == "":
         await callback.message.edit_text(Localizator.get_text(BotEntity.ADMIN, "add_items_category"))
-        await state.set_state(AdminStates.category)
+        await state.set_state(AdminStates.add_entity)
+    elif entity == "subcategory" and category_id == "":
+        categories_button = await create_entity_buttons(
+            CategoryService.get_all(unpacked_cb.page), "subcategory", 24)
+        categories_buttons = await add_pagination_buttons(categories_button, callback.data,
+                                                          CategoryService.get_maximum_page_to_delete(),
+                                                          AdminCallback.unpack,
+                                                          AdminConstants.back_to_main_button)
+        await callback.message.edit_text(Localizator.get_text(BotEntity.ADMIN, "pick_category"),
+                                         reply_markup=categories_buttons.as_markup())
+    elif entity == "subcategory" and category_id != "":
+        await state.update_data(category_id=category_id)
+        await callback.message.edit_text(Localizator.get_text(BotEntity.ADMIN, "add_items_subcategory"))
+        await state.set_state(AdminStates.add_entity)
 
 
-@admin_router.message(AdminIdFilter(), F.text, StateFilter(AdminStates.subcategory, AdminStates.category,
-                                                           AdminStates.description, AdminStates.price,
-                                                           AdminStates.private_data))
-async def add_item_txt_menu(message: Message, state: FSMContext):
+@admin_router.message(AdminIdFilter(), F.text | F.photo, StateFilter(AdminStates.category_description,
+                                                                     AdminStates.category_picture,
+                                                                     AdminStates.subcategory_price,
+                                                                     AdminStates.add_entity,
+                                                                     AdminStates.subcategory_picture))
+async def add_entity_from_msg(message: Message, state: FSMContext):
     current_state = await state.get_state()
     if message.text == "cancel":
         await state.clear()
         await message.answer(Localizator.get_text(BotEntity.COMMON, "cancelled"))
-    elif current_state == AdminStates.category:
-        await state.update_data(category_name=message.text)
-        await state.set_state(AdminStates.subcategory)
-        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_items_subcategory"))
-    elif current_state == AdminStates.subcategory:
-        await state.update_data(subcategory_name=message.text)
-        await state.set_state(AdminStates.description)
-        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_items_description"))
-    elif current_state == AdminStates.description:
-        await state.update_data(description=message.text)
-        await state.set_state(AdminStates.private_data)
-        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_items_private_data"))
-    elif current_state == AdminStates.private_data:
-        await state.update_data(private_data=message.text)
-        await state.set_state(AdminStates.price)
-        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_items_price"))
-    elif current_state == AdminStates.price:
-        await state.update_data(price=message.text)
-        state_data = await state.get_data()
-        category = await CategoryService.get_or_create_one(state_data['category_name'])
-        subcategory = await SubcategoryService.get_or_create_one(state_data['subcategory_name'])
-        items_list = []
-        if (len(state_data['private_data'].split("\n"))) > 1:
-            splitted_private_data = state_data['private_data'].split("\n")
-            for private_data in splitted_private_data:
-                items_list.append(Item(
-                    category_id=category.id,
-                    subcategory_id=subcategory.id,
-                    description=state_data['description'],
-                    price=float(state_data['price']),
-                    private_data=private_data
-                ))
+    elif current_state == AdminStates.add_entity:
+        entity = (await state.get_data())['entity']
+        if entity == "category":
+            await state.update_data(category_name=message.text)
+            await state.set_state(AdminStates.category_description)
+            await message.answer(text=Localizator.get_text(BotEntity.ADMIN, "add_items_description"))
         else:
-            items_list.append(Item(
-                category_id=category.id,
-                subcategory_id=subcategory.id,
-                description=state_data['description'],
-                price=float(state_data['price']),
-                private_data=state_data['private_data']
-            ))
-        await ItemService.add_many(items_list)
+            await state.update_data(subcategory_name=message.text)
+            await state.set_state(AdminStates.subcategory_price)
+            await message.answer(text=Localizator.get_text(BotEntity.ADMIN, "add_items_price").format(
+                currency_text=Localizator.get_currency_text()))
+    elif current_state == AdminStates.category_description:
+        await state.update_data(description=message.text)
+        await state.set_state(AdminStates.category_picture)
+        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_category_picture"))
+    elif current_state == AdminStates.category_picture and message.photo:
+        data = await state.get_data()
+        file_id = message.photo[-1].file_id
+        photo_id = await PhotoService.add_from_file_id(file_id, message.bot)
+        category = await CategoryService.get_or_create_one(
+            data['category_name'],
+            data['description'],
+            photo_id
+        )
         await state.clear()
-        await message.answer(
-            Localizator.get_text(BotEntity.ADMIN, "add_items_success").format(adding_result=len(items_list)))
+        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_category_success").format(
+            category_name=category.name
+        ))
+    elif current_state == AdminStates.subcategory_price:
+        await state.update_data(price=message.text)
+        await state.set_state(AdminStates.subcategory_picture)
+        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_subcategory_picture"))
+    elif current_state == AdminStates.subcategory_picture and message.photo:
+        data = await state.get_data()
+        file_id = message.photo[-1].file_id
+        photo_id = await PhotoService.add_from_file_id(file_id, message.bot)
+        subcategory = await SubcategoryService.get_or_create_one(
+            data['subcategory_name'],
+            data['price'],
+            data['category_id'],
+            photo_id
+        )
+        await state.clear()
+        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_subcategory_success").format(
+            subcategory_name=subcategory.name
+        ))
+
+
+@admin_router.message(AdminIdFilter(), F.text | F.photo,
+                      StateFilter(AdminStates.item_private_data))
+async def add_item(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if message.text == "cancel":
+        await state.clear()
+        await message.answer(Localizator.get_text(BotEntity.COMMON, "cancelled"))
+    elif current_state == AdminStates.item_private_data:
+        await state.update_data(private_data=message.text)
+        state_data = await state.get_data()
+        await ItemService.add_single(
+            Item(
+                subcategory_id=state_data['subcategory_id'],
+                private_data=state_data['private_data']
+            )
+        )
+        cb_builder = InlineKeyboardBuilder().button(text=Localizator.get_text(BotEntity.ADMIN, "add_item"),
+                                                    callback_data=create_admin_callback(7, action="init_picker"))
+        await message.answer(Localizator.get_text(BotEntity.ADMIN, "add_items_success").format(adding_result=1),
+                             reply_markup=cb_builder.as_markup())
+        await state.clear()
 
 
 @admin_router.callback_query(AdminIdFilter(), AdminCallback.filter())
@@ -721,10 +730,8 @@ async def admin_menu_navigation(callback: CallbackQuery, state: FSMContext, call
         3: send_generated_message,
         4: confirm_and_send,
         5: inventory_management,
-        6: add_items,
         7: add_items_menu,
-        8: delete_category,
-        9: delete_subcategory,
+        8: hide_entity,
         10: delete_confirmation,
         11: confirm_and_delete,
         12: users_management,
@@ -738,7 +745,8 @@ async def admin_menu_navigation(callback: CallbackQuery, state: FSMContext, call
         20: get_statistics,
         21: send_db_file,
         22: wallet,
-        23: send_withdraw_crypto_menu
+        23: send_withdraw_crypto_menu,
+        24: add_entity
     }
 
     current_level_function = levels[current_level]

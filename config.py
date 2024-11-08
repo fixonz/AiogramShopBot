@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 import os
-
+from models.currency import Currency
 from ngrok_executor import start_ngrok
 
 load_dotenv()
@@ -8,7 +8,7 @@ load_dotenv()
 WEBHOOK_HOST = start_ngrok()
 WEBHOOK_PATH = os.environ.get("WEBHOOK_PATH")
 WEBAPP_HOST = os.environ.get("WEBAPP_HOST")
-WEBAPP_PORT = os.environ.get("WEBAPP_PORT")
+WEBAPP_PORT = int(os.environ.get("WEBAPP_PORT"))
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 TOKEN = os.environ.get("TOKEN")
 ADMIN_ID_LIST = os.environ.get("ADMIN_ID_LIST").split(',')
@@ -20,4 +20,5 @@ DB_PASS = os.environ.get("DB_PASS")
 PAGE_ENTRIES = int(os.environ.get("PAGE_ENTRIES"))
 BOT_LANGUAGE = os.environ.get("BOT_LANGUAGE")
 MULTIBOT = os.environ.get("MULTIBOT", False) == 'true'
-ETHPLORER_API_KEY = os.environ.get("ETHPLORER_API_KEY")
+CURRENCY = Currency.from_string(os.environ.get("CURRENCY"))
+GETGEOAPI_KEY = os.environ.get("GETGEOAPI_KEY")

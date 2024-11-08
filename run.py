@@ -1,3 +1,6 @@
+import grequests
+from pathlib import Path
+
 from aiogram import types, F, Router
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -59,6 +62,9 @@ main_router.include_router(my_profile_router)
 main_router.include_router(all_categories_router)
 
 if __name__ == '__main__':
+    photos_folder = Path("photos")
+    if photos_folder.exists() is False:
+        photos_folder.mkdir()
     if config.MULTIBOT:
         main_multibot(main_router)
     else:
