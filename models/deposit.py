@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Column, String, ForeignKey, Boolean, BigInteger, DateTime, func
+from sqlalchemy import Integer, Column, String, ForeignKey, Boolean, BigInteger, DateTime, func, Float
 
 from models.base import Base
 
@@ -9,7 +9,6 @@ class Deposit(Base):
     tx_id = Column(String, nullable=False, unique=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     network = Column(String, nullable=False)
-    token_name = Column(String, nullable=True)
     amount = Column(BigInteger, nullable=False)
     is_withdrawn = Column(Boolean, default=False)
     vout = Column(Integer, nullable=True)
